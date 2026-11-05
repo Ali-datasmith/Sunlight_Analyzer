@@ -1,0 +1,6 @@
+{
+  "name": "Sunlight & Shadow Analyzer (SSA)",
+  "description": "Interactive sun-path, shadow, and sunlight-hours tool for small-site planning with real-time isometric simulation, A/B layout comparison, and VS Code ready Python/Tkinter source.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

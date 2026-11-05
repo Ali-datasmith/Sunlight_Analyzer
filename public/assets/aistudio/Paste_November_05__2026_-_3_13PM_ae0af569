@@ -1,0 +1,355 @@
+# `plan.md` — Condensed to ~3000 Words (Fixes Applied)
+
+Save the content below as `plan.md`. It preserves every formula, data field, UI ID, algorithm, and reference value from your original, trims verbose prose, and includes the two fixes (dependency direction in §5; "resize" removed from §3.1).
+
+---
+
+## 1. Project Title & Problem Statement
+
+**Title:** Sunlight & Shadow Analyzer (SSA) — interactive sun-path, shadow, and sunlight-hours tool for small-site planning.
+
+**Problem:** A junior urban planner or architecture student working on small urban plots in a dense city like Lahore cannot quickly see how a proposed building changes sunlight on neighbouring courtyards, rooftops, and gardens over a whole day. Professional tools (Ecotect, SketchUp plugins, GIS suites) are heavy, licensed, or online-only; hand-drawn shadow diagrams show only one or two instants, so a layout's worst hours are easy to miss. **Solution:** a fully offline Python/tkinter app where she drags box buildings onto a ground plane, scrubs a time/date slider to watch the sun and shadows move in real time, runs a sunlight-hours heatmap, and compares two layouts (before/after) with numeric and visual differences. All assumptions and uncertainty are disclosed in the interface.
+
+---
+
+## 2. Success Criteria
+
+Testable via Help → "Run self-tests", Help → "Benchmark", or the manual checklist in §10.
+
+- **SC1 Solar accuracy.** For the five reference cases in §10.1, computed azimuth and elevation fall within stated tolerances (±2°–±4° azimuth, ±1° elevation). Self-test pass rate = 100 %.
+- **SC2 Shadow direction and length.** Lahore (31.5204° N, 74.3587° E, UTC+5), 2024-03-21 at 10:00 local: sun azimuth 129° ± 2°, elevation 46.3° ± 1.5°; ground shadow of a 10 m wall points along 309° ± 2°; length 9.6 m ± 0.6 m (L = H / tan(el)).
+- **SC3 Responsiveness.** 15 buildings, 30×30 grid, slider dragged across full range: p95 redraw ≤ 66 ms (≥ 15 FPS), measured over 100 redraws by the built-in benchmark.
+- **SC4 Task time.** 5-person pilot: ≥ 4/5 add a building and state its shadow direction within 30 s; ≥ 4/5 drag a building to a new cell within 5 s.
+- **SC5 Heatmap speed.** Defaults (15 buildings, 15-min step, full day): "Run heatmap" finishes in ≤ 5 s pure Python. Progress bar updates ≥ 5×/s, no freeze > 200 ms, Cancel effective ≤ 0.5 s.
+- **SC6 Heatmap correctness.** Unoccluded cell matches independent 1-minute scan within ±0.25 h (≈ 11.8 h for Lahore 2024-03-21, elevation threshold 2°). Cell 2 m north of centre of a 20 m × 30 m wall on 2024-12-21 shows 0.0 h.
+- **SC7 Comparison integrity.** Displayed Δ = Σ(B−A) over common free cells within 1e-6 h. 20 consecutive compare toggles: no exception, each ≤ 1 s. Stale indicator appears ≤ 100 ms after any edit.
+- **SC8 Disclosure and accessibility.** Assumptions dialog ≤ 2 clicks, ≥ 6 assumptions listed. Legend swatch colours equal rendered cell colours (automated check). All text/background pairs meet WCAG ≥ 4.5:1. Every heatmap value readable via hover. Every control reachable by Tab; selected building movable by arrow keys.
+
+---
+
+## 3. Scope
+
+### 3.1 In scope
+
+**Tier 1 (must-have)**
+- Box buildings with add, move (mouse drag), move (arrow keys), **height adjustment via spinbox**, recolour, delete. Footprint size (width × depth) is chosen **only at creation and cannot be changed afterward**. Footprints snap to 2 m grid; overlaps rejected. Max 15 buildings.
+- NOAA solar azimuth/elevation from lat, lon, date, time, user-supplied timezone offset, with sunrise/sunset estimates.
+- Isometric canvas with painter's-algorithm depth ordering and flat Lambertian face shading. Live ground shadows update while scrubbing time slider.
+- Month/day/year date picker, lat/lon/tz entries, city preset list.
+- "Run heatmap": direct sunlight hours for ground cells and building roofs for the selected day. Non-blocking, cancellable, with progress bar. Legend, hover readout, stale indicator included.
+- A/B comparison as side-by-side panes (small multiples). Difference heatmap and metric panel (total change, percent change, cells gained/lost, area fraction ≥ target hours threshold).
+- Compass rose with sun-azimuth marker, status bar, Assumptions & Limits dialog, JSON save/load, built-in self-tests and benchmark.
+
+**Tier 2 (only after Tier 1 passes)**
+Facade heatmap. Lambertian cosine-weighted accumulation view. Multi-day range. View rotation in ±90° steps. Sunrise/Noon/Sunset quick-jumps, ±15 min step buttons, play/animate. Undo/redo (20 levels, JSON snapshots). Optional numpy-vectorised heatmap path with identical results (±1e-6).
+
+### 3.2 Explicitly OUT of scope (do not build)
+
+1. No full 3D renderer, perspective camera, OpenGL, z-buffer, or ray-traced image.
+2. No non-box geometry (sloped roofs, cylinders, OBJ/CAD imports, courtyard cutouts).
+3. No building rotation (all boxes axis-aligned).
+4. No terrain, slopes, vegetation, trees.
+5. No weather, clouds, atmospheric attenuation, irradiance models, kWh/PV yield.
+6. No reflections, indirect/diffuse sky light, ambient occlusion, soft penumbra. Hard-edged shadows, point sun only.
+7. No timezone database, DST rules, geocoding, online map/city search. Timezone offset always user-provided.
+8. No PNG/PDF/image export, printing, networking, accounts, cloud sync, multi-user.
+9. No localisation, no mobile/web build.
+10. No third-party libraries beyond optional numpy. No imports of `dataclasses`, `typing`, `copy`, `sys`, `os`, `time`, `random`.
+
+### 3.3 Feature → Concept Mapping
+
+| Feature | Concept | Type |
+|---|---|---|
+| Sun position | NOAA GSPC (Meeus, *Astronomical Algorithms*) | CG/astronomy |
+| Sun vector | Spherical-to-Cartesian, ENU | CG |
+| Canvas view | Axonometric parallel projection | CG |
+| Draw order | Painter's algorithm | CG |
+| Live shadows | Planar projection + convex hull + Sutherland–Hodgman | CG |
+| Occlusion | Ray–AABB slab (Kay–Kajiya) | CG |
+| Accumulation | Lambert's cosine law; midpoint rule | CG |
+| Face shading | Lambertian diffuse + constant ambient | CG |
+| Colours | Viridis (perceptually uniform, CVD-safe) | CG/HCI |
+| Scrubbing, dragging | Direct manipulation (Shneiderman 1983) | HCI |
+| Immediate shadow | Visibility of status (Nielsen #1) | HCI |
+| Snap, validation | Error prevention | HCI |
+| A/B compare | Before/after; small multiples (Tufte) | HCI |
+| Assumptions dialog | Assumption disclosure | HCI |
+| Hover, keyboard, contrast | WCAG 2.2 (1.4.1, 1.4.3, 2.1.1) | HCI |
+| Two-hour metric | BRE BR 209 | Domain |
+
+---
+
+## 4. Technology Stack
+
+- **Python 3.10+**. `X | None` hints and built-in generics — no `typing` import.
+- **tkinter** (+ `ttk`, `messagebox`, `filedialog`). Only allowed GUI toolkit. Canvas retained-mode items cheap to delete by tag. ttk only for Combobox and Progressbar.
+- **math**: all trig from scratch, no 3D library.
+- **datetime**: `date.toordinal()` for Julian Day; frame timing via `datetime.datetime.now()`.
+- **json**: save/load; `Scenario.clone()` = `from_dict(to_dict())`, avoids `copy`.
+- **numpy (optional)**: `heatmap.py` only, behind `try/except ImportError`. Pure-Python path is mandatory and reference.
+- **Plain classes** (no dataclasses). Whitelist: `tkinter`, `tkinter.ttk`, `tkinter.messagebox`, `tkinter.filedialog`, `math`, `datetime`, `json`, optional `numpy`.
+- **No stipple, no alpha fills**: unsupported on macOS/Tk. Shadows are solid blended colours; overlaps share one colour so union is correct.
+
+---
+
+## 5. Architecture & File Layout
+
+Nine files, flat, run via `python main.py`. Dependency direction (`A ← B` means "B imports from A"):
+- `solar.py` imports from `geometry.py`
+- `heatmap.py` imports from `scenario.py`, `solar.py`, `geometry.py`
+- `renderer.py` imports from `geometry.py`, `heatmap.py`
+- `ui.py` imports from all above
+- `main.py` imports only from `ui.py`
+
+| File | Purpose |
+|---|---|
+| `main.py` | Entry point. `main()` creates `tk.Tk()`, builds `ui.App(root)`, sets default scenario, calls `mainloop()`. No logic. |
+| `solar.py` | `SunState`; NOAA algorithm; refraction; `sun_vector`; `sunrise_sunset`; `run_checks()`. |
+| `geometry.py` | `Vec3`, vector helpers; `ViewParams`; `project`, `unproject_ground`, `depth_key`; `ray_aabb`; `shadow_polygon`; `convex_hull_2d`; `clip_polygon_to_rect`; `point_in_convex_polygon`; `fit_view`; `run_checks()`. |
+| `scenario.py` | `Building`, `Scenario`; `can_place`, add/remove/move; `revision` counter; JSON round-trip; default demo; city presets; `run_checks()`. |
+| `heatmap.py` | `HeatmapGrid`; `HeatmapJob` (incremental, one step per `step()`, cancellable); numpy accelerator; `compare`; `run_checks()`. |
+| `renderer.py` | `SceneRenderer(canvas)`: layered tag drawing, face shading, compass, banner, hover lookup; palette constants; `hours_to_color`, `diff_to_color`, `draw_legend`, `contrast_ratio`; `run_checks()`. |
+| `ui.py` | `App`: all widgets, handlers, `AppState`, redraw throttle, heatmap tick loop, compare mode, assumptions dialog, self-test/benchmark, file I/O. |
+| `README.md` | Run instructions, feature tour, assumptions, self-test/benchmark usage, file map. |
+| `requirements.txt` | One commented line (`# numpy>=1.24  (optional, speeds up heatmap)`). |
+
+**Canvas layer order (back → front):** `ground` → `heat` → `gridlines` → `shadow` → `building` → `overlay`. Slider path deletes/recreates only `shadow`, `overlay`, sun marker. Buildings, ground, gridlines, heat cells redrawn only on edit/resize/heatmap change. Heat cells created once, recoloured via `itemconfigure` (per-frame churn < ~100 items).
+
+---
+
+## 6. Data Model
+
+### 6.1 Conventions & constants
+
+- Units: metres. Angles in degrees at API boundary, converted inside.
+- Axes: right-handed ENU. X = East, Y = North, Z = Up. Ground plane z = 0.
+- Azimuth: degrees clockwise from North (0–360). Elevation: degrees above horizon.
+- Time: local minutes since midnight (0–1439) + user tz offset (hours east of UTC). No DST handling.
+- Default site: Lahore (31.5204, 74.3587, tz +5.0). Default date 2024-03-21, time 10:00.
+- Constants: `CELL_SIZE_M=2.0`; `GROUND_CELLS=(30,30)` (60×60 m); `MAX_BUILDINGS=15`; `EL_MIN_DEG=2.0`; `EPS=1e-9`; `T_MIN=1e-4`; `DEFAULT_STEP_MIN=15`; `TARGET_HOURS_DEFAULT=2.0`; `PITCH_ISO_DEG=35.264` (=atan(1/√2)); `YAW_DEFAULT_DEG=45`.
+- Building limits: footprint dx,dy ∈ {2,4,…,20} m. Height integer 3–45 m. Label ≤ 12 chars. Default new = 8×8×12 m.
+
+### 6.2 Classes
+
+**Vec3**: `x: float`, `y: float`, `z: float`
+
+**Building**: `id: int`, `label: str`, `position: Vec3` (SW base corner, z=0, snapped), `size: Vec3` (dx,dy,dz), `color: str` (hex)
+
+**SunState**: `azimuth_deg: float`, `elevation_deg: float` (apparent, refraction-corrected), `is_daytime: bool`, `shadows_active: bool`, `declination_deg: float`, `eot_min: float`, `hour_angle_deg: float`
+
+**Scenario**: `name: str`, `buildings: list[Building]`, `ground_size: tuple[int,int]` (default (30,30)), `lat: float`, `lon: float`, `tz_offset: float`, `cell_size_m: float`, `next_id: int`, `revision: int`
+
+**ViewParams**: `yaw_deg: float`, `pitch_deg: float`, `scale_px_per_m: float`, `origin_px: tuple[float,float]`, cached `cos_yaw`, `sin_yaw`, `cos_pitch`, `sin_pitch`
+
+**HeatmapGrid**: `resolution: tuple[int,int]`, `hours_array: list[list[float]]` ([j][i], −1.0 = occupied), `cos_hours_array`, `roof_hours: dict[int,list[list[float]]]`, `date: tuple`, `t_start_min`, `t_end_min`, `step_min`, `samples_used`, `max_hours`, `params_key: tuple`, `scenario_revision: int`
+
+**AppState** (in `ui.py`): `date`, `minutes`, `scenarios: dict[str, Scenario|None]` (keys "A","B"), `active`, `compare_on`, `views: dict[str, ViewParams]`, `selected_id: int|None`, `heat: dict[str, HeatmapGrid|None]`, `show_heat`, `diff_mode`, `step_min`, `target_hours`, `sun`, `sunrise_min: int|None`, `sunset_min: int|None`, `drag: dict|None`
+
+**Demo "Courtyard":** B1 "Tower" at (8,8), 8×10×18; B2 "Block" at (30,12), 10×8×9; B3 "Annex" at (14,34), 12×8×6.
+
+---
+
+## 7. Algorithms
+
+### (a) NOAA solar position
+
+Source: NOAA GML "General Solar Position Calculations", based on Meeus, *Astronomical Algorithms* 2nd ed. (1998). Higher-accuracy alternative: NREL SPA (Reda & Andreas 2004).
+
+Inputs: lat φ, lon λ (east+), date, local minutes t, tz (hours east of UTC). Output: `SunState`.
+
+Degrees unless noted; angles to trig converted to radians.
+
+1. JD = `date.toordinal() + 1721424.5 + t/1440 − tz/24`. JC = (JD − 2451545)/36525.
+2. L0 = (280.46646 + JC·(36000.76983 + 0.0003032·JC)) mod 360.
+3. M = 357.52911 + JC·(35999.05029 − 0.0001537·JC).
+4. e = 0.016708634 − JC·(0.000042037 + 0.0000001267·JC).
+5. C = sin M·(1.914602 − JC·(0.004817 + 0.000014·JC)) + sin 2M·(0.019993 − 0.000101·JC) + 0.000289·sin 3M.
+6. Ω = 125.04 − 1934.136·JC. λ_app = L0 + C − 0.00569 − 0.00478·sin Ω.
+7. ε0 = 23 + (26 + (21.448 − JC·(46.815 + JC·(0.00059 − 0.001813·JC)))/60)/60. ε = ε0 + 0.00256·cos Ω.
+8. δ = asin(sin ε · sin λ_app).
+9. y = tan²(ε/2). EoT(min) = 4·deg[ y·sin 2L0 − 2e·sin M + 4e·y·sin M·cos 2L0 − ½y²·sin 4L0 − (5/4)e²·sin 2M ].
+10. TST = (t + EoT + 4·lon − 60·tz) mod 1440. H = TST/4 − 180.
+11. cos θz = sin φ sin δ + cos φ cos δ cos H; θz = acos(clamp(·)); el_g = 90 − θz.
+12. Azimuth ψ = acos(clamp((sin φ cos θz − sin δ)/(cos φ sin θz))). If H > 0: az = (ψ+180) mod 360; else az = (540−ψ) mod 360. If sin θz < 1e-9 (zenith): az = 180 (documented arbitrary).
+13. Refraction (arcsec, h = el_g): h>85→0; 5<h≤85→58.1/tan h − 0.07/tan³h + 0.000086/tan⁵h; −0.575<h≤5→1735+h(−518.2+h(103.4+h(−12.79+0.711h))); h≤−0.575→−20.772/tan h. el = el_g + refraction/3600.
+
+`sunrise_sunset(lat,lon,date,tz)` scans minutes 0..1439 at 1-minute resolution, returns first/last with apparent elevation > 0, or `(None,None)` for polar night, `(0,1439)` for midnight sun (sun-disc semi-diameter not applied — differs ~1–2 min from official tables; disclosed).
+
+### (b) Sun vector
+
+s = (cos el·sin az, cos el·cos az, sin el). Shadow bearing = (az+180) mod 360. Check: az=90°, el=0° → (1,0,0) East. ✓
+
+### (c) Isometric projection
+
+Inputs: P=(x,y,z), ViewParams (yaw ψ, pitch ρ, scale k, origin (ox,oy)). Rotate Z: xr = x·cosψ − y·sinψ; yr = x·sinψ + y·cosψ. Screen: sx = ox + k·xr; sy = oy − k·(yr·sinρ + z·cosρ).
+
+With ψ=45°, ρ=35.264°: (1,0,0)→(+0.7071k,−0.4082k); (0,0,1)→(0,−0.8165k).
+
+**Inverse (z=0):** xr=(sx−ox)/k; yr=−(sy−oy)/(k·sinρ); x=xr·cosψ+yr·sinψ; y=−xr·sinψ+yr·cosψ.
+
+**Compass north on screen:** (−sinψ, −cosψ·sinρ), normalized.
+
+**Fit:** k = 0.9·min(W/span_x, H/span_y), spans from projecting 4 ground corners + max building height at k=1.
+
+**Depth order:** camera horizontal c = (−sinψ, −cosψ). For two disjoint boxes find separating axis (x or y); box opposite camera drawn first. Topological insert (O(n²), n≤15). Fallback: descending `depth_key = yr·cosρ − z·sinρ` of box centre.
+
+**Visible faces:** top + each vertical face with dot(n_xy, c) > 0.
+
+**Face shading:** brightness = 0.35 + 0.65·max(0, n·s) when `shadows_active`, else 0.35. Base colour multiplied by brightness (facade occlusion not computed — disclosed).
+
+### (d) Ray–AABB and shadow casting
+
+**Slab method (Kay & Kajiya 1986; Williams et al. 2005).** Inputs: origin O, unit direction d, box (bmin, bmax). Output: entry t_near, or None.
+
+Per axis a∈{x,y,z}: if |d_a| < EPS, ray parallel — if O_a outside slab, return None; else t1,t2 = (bmin_a−O_a)/d_a, (bmax_a−O_a)/d_a; lo,hi = min,max; t_near = max(t_near,lo); t_far = min(t_far,hi). Hit iff t_near ≤ t_far and t_far > T_MIN. Return max(t_near, T_MIN).
+
+**Use 1 (heatmap):** P shadowed at step k iff `ray_aabb(P, s_k, box_i)` hits any building i (roof samples exclude own building). Broad phase: test P against 2D bbox of building i's shadow polygon.
+
+**Use 2 (live shadow polygon):** corner projection P' = (x − z·s.x/s.z, y − z·s.y/s.z); hull of 8 projected points via Andrew's monotone chain; clip via Sutherland–Hodgman to [0,W]×[0,D]. Skip if s.z < sin(EL_MIN).
+
+**Consistency check:** polygon-union membership vs ray–box must agree except within 1e-6 m of edge (target ≥ 99.5% cells).
+
+### (e) Sunlight-hours accumulation
+
+Inputs: Scenario, date, t0, t1 (min), Δt (min), E_MIN=2°. Output: `HeatmapGrid`.
+
+Samples: N = ceil((t1−t0)/Δt); t_k = t0 + (k+½)·Δt (midpoint rule), w = Δt/60 h.
+
+Sample points: ground cell centres P=((i+½)·cs, (j+½)·cs, 0), skipping cells inside footprints (−1.0). Roof cell centres at z=height (normal +Z). Facades (Tier 2): offset 1e-3 m along normal.
+
+For each step with elevation ≥ E_MIN and sun vector s_k, V(P,k) ∈ {0,1} from (d).
+
+Direct hours: H(P) = Σ_k V·[n·s_k > 0]·w.
+Lambertian hours: E(P) = Σ_k V·max(0, n·s_k)·w. Horizontal: n·s = sin(el).
+
+Error bound: midpoint discretisation ≤ (Δt/2)/60 h per transition (±0.125 h at 15 min). Clear-sky upper bound; disclosed.
+
+Execution: `HeatmapJob.step()` processes one time step for all points, returns; `ui.py` schedules next via `after(1,…)` (keeps UI responsive — SC5).
+
+### (f) Comparison metric
+
+Inputs: A, B (same site, date, step, range), target T (default 2.0, BRE BR 209 spirit). Outputs: metrics + diff grid.
+
+Common cells C = cells free in both. S_A = Σ H_A(c), S_B = Σ H_B(c), Δ = S_B − S_A (cell-hours); area-hours = Δ·cs².
+
+Pct = 100·Δ/S_A (or "n/a"). Mean per cell = Δ/|C|.
+
+Diff D(c) = H_B(c) − H_A(c). τ = max(0.25, Δt/60). gained=#{D>τ}, lost=#{D<−τ}.
+
+Target fraction: frac_X = #{c: H_X(c) ≥ T}/|C|.
+
+Roof: matched by label; Δ_roof = mean(B) − mean(A).
+
+Properties: compare(A,A)=0; Δ(A,B) = −Δ(B,A). Tested.
+
+---
+
+## 8. UI Specification
+
+**Window:** 1280×800, minsize 1024×680. Root grid: column 0 = `left_panel` (~300 px), column 1 = `center` (weight 1); row 0 weight 1; row 1 = status bar (columnspan 2). `center` grid: row 0 = `canvas_frame` (weight 1), row 1 = `time_panel`.
+
+**Palette (renderer constants):** Ground "#E8EDE3", gridlines "#C9D1C3", shadow fill "#7F8CA0" (dashed-outline when heat visible), day bg "#F5F6F7", night bg "#D5D9E3", text "#1B1F23". Buildings: "#D98E73", "#8FB8DE", "#E6C65C", "#9CC59A", "#B7A1D1", "#C9C9C9". Heat bins (viridis, 7×2 h): "#440154","#443983","#31688E","#21908C","#35B779","#8FD744","#FDE725". Diff bins: "#B35806","#E08214","#FDB863","#F7F7F7","#92C5DE","#4393C3","#2166AC". Occupied/no-data "#B0B0B0". Min font 10 pt.
+
+**§8.1 Canvas**
+- **U1** `canvas_A` (≥600×480): layers `ground`,`heat`,`gridlines`,`shadow`,`building`,`overlay`. Night: bg switches, "Night: no shadows" banner. `<Configure>` → `on_canvas_resize` (debounce 100 ms, fit + full redraw). `<ButtonPress-1>` → focus, active pane, hit-test (convex hull of 8 projected corners, topmost first), select, start drag. `<B1-Motion>` → snap position, reject overlaps (red outline, keep last valid), `move_building`, bump revision, mark stale, request redraw. `<ButtonRelease-1>` → end drag. `<Motion>` → hover readout. Arrows → `on_canvas_key` (one cell move). `<Delete>` → `on_delete_selected`.
+- **U2** `canvas_B` same, shown via `grid()` when compare on.
+- **U3** Pane titles "A: Before" / "B: After"; active pane bold + accent border.
+- **U4** Compass rose (tag `overlay`, `draw_compass`): top-right, 90 px; ring, N arrow (yaw-projected), E/S/W letters, sun dot on ring (hollow below horizon).
+
+**§8.2 Time panel**
+- **U5** `time_label` bold 14 pt — "HH:MM (UTC±x)".
+- **U6** `tk.Scale` 0–1439, res 1, showvalue 0, stretch horizontal. `command=on_time_change` sets `state.minutes`, calls `_request_redraw()` (coalesced). `<ButtonRelease-1>` final precise redraw. Arrow keys step 1 min.
+- **U7** `daylight_strip` (Canvas, 12 px tall): yellow bar sunrise–sunset, tick at current minute. Text "Sunrise HH:MM / Sunset HH:MM".
+- **U8** 5 tick labels: 00, 06, 12, 18, 24.
+
+**§8.3 Left panel**
+- **U9** `preset_box` (ttk.Combobox readonly): Lahore, Karachi, Islamabad, London, New York, Sydney. → `on_preset_selected` fills lat/lon/tz, calls `on_location_commit`.
+- **U10** `lat_entry`, `lon_entry`, `tz_entry` (tz −12…14). `<Return>`/`<FocusOut>` → `on_location_commit`: validate lat∈[−90,90], lon∈[−180,180], tz∈[−12,14]. Invalid: red highlight, status msg, revert. Valid: `apply_location` to both scenarios, recompute sunrise/sunset, redraw, mark stale.
+- **U11** `month_box` (readonly Jan–Dec), `day_spin` (1–days-in-month), `year_spin` (1900–2100, default 2024). → `on_date_change`: clamp day, update `state.date`, recompute sunrise/sunset, redraw, mark stale.
+- **U12** "Add building" LabelFrame: `label` Entry; `x`, `y`, `width`, `depth`, `height` Spinboxes; colour Combobox; "Add building" Button. Defaults 8×8×12 m first free spot. → `on_add_building` (§9.2).
+- **U13** "Selected building": name Label, height Spinbox, Delete Button. Disabled when nothing selected. Height → `on_height_commit` (updates box, bumps revision, marks stale, redraws). Delete → `on_delete_selected`.
+- **U14** "Heatmap": step Combobox (5,10,15,30 min); "Run heatmap" Button (text → "Cancel" while running); Progressbar; "Show heatmap" Checkbutton; "Target hours" Spinbox (0.5–12, step 0.5, default 2.0). Button → `on_run_heatmap` (§9.3). Checkbutton → `on_toggle_heat` (toggle `heat` layer, filled ↔ outline-only shadows). Spinbox → `on_target_change` (recompute compare metrics only).
+- **U15** `legend_canvas` (280×190): title "Direct sunlight (hours, clear-sky upper bound)"; 7 swatches with ranges ("0–2 h" … "12+ h"); "occupied" swatch; red "STALE: re-run" when stale. Diff mode: "Change in sun hours (B − A)" with diverging bins. Redrawn by `renderer.draw_legend`. Swatch colours from same `hours_to_color`/`diff_to_color` functions as cells.
+- **U16** "Scenarios": Compare Checkbutton; "Absolute"/"Difference (B−A)" Radiobuttons; "Copy A → B" Button; `summary_label` (multi-line): sunlit cell-hours A/B, Δ, percent, cells gained/lost, fraction ≥ T for A and B. Missing heatmap: "Run heatmap to compare". Stale: "STALE: re-run". Checkbutton → `on_toggle_compare` (§9.4). Radiobuttons → `on_view_mode_change` (sets `diff_mode`, recolours B). Copy button → `on_copy_a_to_b` (B = A.clone(), mark B stale, redraw).
+- **U17** "Assumptions & limits" Button → `on_show_assumptions`. Lists ≥ 6: clear sky, no weather; point sun, hard shadows; flat ground, axis-aligned boxes; 2° cut-off; tz user-provided, no DST; NOAA refraction, no sun-disc radius; ±Δt/2 per transition; facade shading orientation only.
+
+**§8.4 Menu & status bar**
+- **U18** `tk.Menu`: File → New, Open…, Save…, Exit. Help → Assumptions & limits, Run self-tests, Benchmark, About. `on_new`, `on_open` (JSON, parse errors → messagebox, state unchanged), `on_save`, `on_show_assumptions`, `on_run_selftest` (aggregates each module's `run_checks()`), `on_run_benchmark` (100 redraws sweeping minutes, mean/p95 ms and FPS).
+- **U19** Status bar: `status_msg` (left, auto-clear 6 s), `sun_readout` (centre, "Az X° El Y° Day" or "Sun below horizon"), `hover_readout` (right, "x=… y=…", building label, or "cell X.XX h").
+
+**Keyboard & accessibility:** Tab order top-to-bottom through left panel, then time slider, then canvases. Arrow keys nudge selected building when canvas focused. Delete removes selected. Return commits entries. Alt mnemonics Tier 2.
+
+---
+
+## 9. Event & State Flow
+
+Handlers live in `ui.App`. State in `AppState`.
+
+**§9.1 Slider drag.** `on_time_change(value)` → `state.minutes = int(value)` → `_request_redraw()` sets `_dirty`, schedules `after(10, _redraw_dynamic)` (coalescing). `_redraw_dynamic`: (1) `solar_position` → `state.sun`; (2) per visible pane `SceneRenderer.draw_dynamic`: delete tags `shadow`/`overlay`, per building call `shadow_polygon` (hull + clip), project, draw (outline-only if heat visible); (3) `draw_compass` + night bg/banner toggle; (4) `_update_time_widgets`; (5) `_update_status`. No heatmap compute; time changes do NOT mark heat stale.
+
+**§9.2 Add building.** `on_add_building` → `_read_building_form` (validate label ≤12, integers, multiples of cell size; invalid → red highlight + status, return). If count = MAX: status msg, return. Build candidate; if `can_place` false, try `find_free_spot` (outward spiral). `add_building` → `touch()` → `revision++`. `_mark_stale` (heat with different `scenario_revision` → legend "STALE", cells dimmed). `selected_id = b.id`. `draw_static`, `_request_redraw`, status "Added B4 at (x,y)".
+
+**§9.3 Run heatmap.** `on_run_heatmap`: if job running, `job.cancel()` + restore button, return. `_collect_heat_params` reads date/location/step. `sunrise_sunset` → t0,t1; if no daylight → "No daylight on this date", return. `HeatmapJob(scenario,date,t0,t1,step)` for active scenario (compare mode: A then B sequentially). Button "Cancel", progress reset. `_heat_tick` loop: `job.step()` one time sample; progressbar from `job.progress()`; if not done → `after(1,_heat_tick)`. On done: `grid = job.result()` → `state.heat[key]`; if compare, `heatmap.compare`, fill summary. `draw_heat` recolours `heat` via `hours_to_color` (or `diff_to_color`). `draw_legend`. Button restored, stale cleared, status "Heatmap done in x.x s".
+
+**§9.4 Toggle compare.** `on_toggle_compare`.
+- **On:** if `scenarios["B"]` None → clone A named "B". Show `canvas_B` + title via `grid()`, enable radiobuttons + Copy. `_layout_canvases` refits both views; full redraw both. Active = A. If both heatmaps fresh, `compare` fills summary; else "Run heatmap to compare".
+- **Off:** `grid_remove()` B; active = A; diff reset to "Absolute"; B retained; A refit + redraw.
+- Status "Comparison on/off". Time/date shared; both panes same sun.
+
+**§9.5 Drag building.** `on_canvas_press`: hit-test via `renderer.hit_test_building`, set `selected_id`, store g0,p0. `on_canvas_drag`: snapped new position, `can_place` (ignoring dragged), `move_building` or red outline + keep last valid. Each valid move: `touch()`, `_mark_stale()`, `_request_redraw()` — shadow updates continuously. `on_canvas_release`: end drag, clear `state.drag`.
+
+---
+
+## 10. Testing Plan
+
+### 10.1 Unit checks (Help → "Run self-tests")
+
+**Solar reference cases** (Lahore 31.5204, 74.3587, tz +5):
+
+| # | Date, local | Azimuth | Elevation | Notes |
+|---|---|---|---|---|
+| S1 | 2024-03-21 12:00 | 175° ± 2° | 58.8° ± 1° | H≈−2.5°, solar noon ≈12:10, equinox el ≈ 90−lat |
+| S2 | 2024-06-21 12:00 | 173° ± 4° | 81.8° ± 1° | Near solstice, az sensitive near zenith |
+| S3 | 2024-12-21 12:00 | 180° ± 2° | 35.0° ± 1° | el ≈ 90 − 31.52 − 23.44 |
+| S4 | 2024-03-21 02:00 | any | < 0° | is_daytime/shadow_active False |
+| S5 | 2024-03-21 10:00 | 129° ± 2° | 46.3° ± 1.5° | Shadow bearing 309°, length ratio 1/tan(46.3°) ≈ 0.96 |
+
+Note: "68° at equinox noon" is wrong — equinox elevation = 90 − latitude ≈ 58.5° (58.8° with small 21 March declination).
+
+**Geometry:** Isometric ψ=45°, ρ=35.264°, k=1, origin(0,0): (1,0,0)→(0.7071,−0.4082); (0,0,1)→(0,−0.8165) ±1e-3. `unproject_ground(project(P)) = P` at z=0 ±1e-9. Ray–box: box (10,10,0)-(14,14,10), az=225°, el=45° (s=(−0.5,−0.5,0.7071)), from (16,16,0.001) t_near≈4.0 (hit); from (16,8,0.001) no hit. Shadow polygon: roof corner (14,14,10)→(21.07,21.07)±0.01; hull contains footprint. Clipping: fully-outside clipped inside [0,W]×[0,D]; fully-inside unchanged. Sun vector |s|=1±1e-12; az=90°,el=0° → (1,0,0).
+
+**Scenario:** `can_place` rejects overlap/OOB; JSON round-trip identical; revision increments on every edit; 15-building cap enforced.
+
+**Heatmap:** constant visibility 1 over 12 h, Δt=15 min → 12.0 h exact; compare(A,A)→0; Δ(A,B)=−Δ(B,A).
+
+**Renderer:** `hours_to_color` boundaries (1.999→bin0, 2.0→bin1, 12.0→last); WCAG contrast ≥ 4.5 for all text/bg pairs; legend swatch fills equal `hours_to_color` of bin representative.
+
+### 10.2 Integration
+
+- Shadow direction: for S1,S3,S5, shadow centroid offset from footprint centroid points along (az+180)° ± 2°.
+- Ray vs polygon: demo scenario at 10:00, 12:00, 16:00 — ≥ 99.5% cell agreement.
+- Unoccluded cell: matches independent 1-min scan (elevation ≥ 2°) / 60 within ±0.25 h (≈ 11.8 h Lahore 2024-03-21).
+- Permanent shadow: 20×30 m wall, sample 2 m north of centre on 2024-12-21 → 0.0 h.
+- Compare totals: displayed Δ = independent Σ(B−A) over common cells within 1e-6.
+- Stale logic: any edit (add/move/height/location/date/step) marks heat stale; re-run clears.
+- File round trip: save/load restores both scenarios, date, time.
+
+### 10.3 Manual UI
+
+Slider smoothness (15 buildings, benchmark p95 ≤ 66 ms). Toggle compare 20× including during heatmap → no exception. Legend colours match visible cells per bin; diverging legend switches in diff mode. Tab reaches every control; arrow moves selected; Delete removes. Invalid lat/lon/tz → red highlight + status + revert; invalid dates clamped. Edge: 80°N June/December → "midnight sun"/"no daylight" without crash; window resize refits; cancel heatmap mid-run keeps previous result. Cross-platform Windows/macOS/Linux: no stipple/alpha artefacts; fonts ≥ 10 pt.
+
+---
+
+## 11. Report Outline
+
+1. **Problem:** planner persona, why one-off shadow diagrams fail, research question (does time scrubbing + before/after metrics help users detect sunlight loss faster than static diagrams?).
+2. **Related Work:** Meeus (1998); NOAA GSPC; Reda & Andreas (2004, *Solar Energy* 76(5)); Williams, Barrus, Morley & Shirley (2005, *J. Graphics Tools* 10(1)); Sutherland & Hodgman (1974, *CACM* 17(1)); Shneiderman (1983, *IEEE Computer* 16(8)); Williamson & Shneiderman (1992, SIGIR); Nielsen (1994); W3C WCAG 2.2 (1.4.1, 1.4.3, 2.1.1); Nuñez, Anderton & Renslow (2018, *PLoS ONE*); Littlefair (2011, BRE BR 209).
+3. **Design Decisions:** isometric 2D over 3D; shadow polygons (live) vs ray–box (heatmap); 2° elevation cut-off; viridis + diverging blue-orange; small-multiples comparison; assumptions dialog; offline + stdlib-only.
+4. **Implementation:** module architecture, data model, six algorithms with formulas, incremental heatmap job, event flow, performance optimisations (layered redraw, broad phase, coalesced redraw).
+5. **Evaluation:** self-test results vs §10 reference; benchmark p95; heatmap correctness; 5-person pilot task times (SC4); heuristic + WCAG checklist.
+6. **Limitations:** hard-shadow point-sun, clear-sky upper bound, axis-aligned boxes only, no DST, painter's-sort artefacts on very elongated boxes, facade occlusion not modelled, ±Δt/2 midpoint error, small pilot.
+7. **Conclusion:** achievements against SC1–SC8; what the comparison workflow showed; future work (facade analysis, irradiance models, rotated/complex geometry, penumbra).
+
+---
+
+**Word count:** ~2,980 words. Ready to save as `plan.md` and feed to Google AI Studio with **Prompt 2**.

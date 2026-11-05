@@ -1,0 +1,4 @@
+# Sunlight & Shadow Analyzer (SSA) Dependencies
+# SSA requires NO external packages! It runs entirely on the standard Python 3.10+ library.
+# Optional performance accelerator:
+# numpy>=1.24
